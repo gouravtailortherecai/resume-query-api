@@ -1,8 +1,8 @@
-# query_api/main.py
 from fastapi import FastAPI, Body
 import os
-from langchain_groq import GroqEmbeddings, ChatGroq
+from google import genai
 from langchain_postgres import PGVector
+from langchain_groq import ChatGroq
 from langchain import hub
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
@@ -10,14 +10,27 @@ from langchain_core.output_parsers import StrOutputParser
 app = FastAPI()
 
 # Env vars
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 NEON_POSTGRES_URI = os.getenv("NEON_POSTGRES_URI")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Groq Embeddings
-embeddings = GroqEmbeddings(
-    model="nomic-embed-text",
-    groq_api_key=GROQ_API_KEY
-)
+# Gemini client
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+def embed_text(text: str):
+    emb = client.models.embed_content(
+        model="text-embedding-004",
+        contents=text
+    )
+    return emb.embedding
+
+class GeminiEmbeddings:
+    def embed_documents(self, texts):
+        return [embed_text(t) for t in texts]
+    def embed_query(self, text):
+        return embed_text(text)
+
+embeddings = GeminiEmbeddings()
 
 # Neon vector DB
 vectorstore = PGVector(
@@ -28,14 +41,14 @@ vectorstore = PGVector(
 )
 retriever = vectorstore.as_retriever()
 
-# Groq LLM
+# Groq LLM for answers
 llm = ChatGroq(
-    model="openai/gpt-oss-120b",  # or llama2-70b-4096
+    model="openai/gpt-oss-120b",
     temperature=0.3,
     groq_api_key=GROQ_API_KEY,
 )
 
-# RAG Chain
+# RAG chain
 prompt = hub.pull("rlm/rag-prompt")
 
 def format_docs(docs):
@@ -50,9 +63,6 @@ rag_chain = (
 
 @app.post("/query")
 def query_rag(question: str = Body(..., embed=True)):
-    """
-    Query Neon embeddings with Groq RAG.
-    """
     try:
         answer = rag_chain.invoke(question)
         return {"question": question, "answer": answer}

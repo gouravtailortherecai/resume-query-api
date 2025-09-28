@@ -4,3 +4,4 @@ langchain
 langchain-postgres
 langchain-groq
 psycopg[binary]
+google-genai

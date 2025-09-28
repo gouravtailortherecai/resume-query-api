@@ -23,16 +23,19 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 def embed_text(text: str):
     """Call Gemini embeddings API (v2) and return vector"""
-    # Gemini expects contents as a list of strings
+    if not isinstance(text, str):
+        raise ValueError("embed_text only accepts strings, not dicts or lists of dicts")
+    
+    # contents can be a single string or a list of strings
     emb_response = client.models.embed_content(
         model="text-embedding-004",
-        contents=[text]  # must be a list
+        contents=[text]  # wrap in list
     )
+    # Always extract the embedding from data[0]
     return emb_response.data[0].embedding
 
 class GeminiEmbeddings:
     def embed_documents(self, texts):
-        # Accepts a list of strings
         return [embed_text(t) for t in texts]
 
     def embed_query(self, text):
@@ -76,7 +79,7 @@ def format_docs(docs):
 def get_context(question: str):
     """Fetch relevant documents and format them"""
     docs = retriever.get_relevant_documents(question)
-    return format_docs(docs)
+    return format_docs(docs)  # returns plain string
 
 # =========================
 # RAG chain
@@ -94,7 +97,7 @@ rag_chain = (
 @app.post("/query")
 def query_rag(question: str = Body(..., embed=True)):
     try:
-        # Invoke the RAG chain with a dictionary input
+        # Only pass plain strings to embeddings internally
         answer = rag_chain.invoke({"question": question})
         return {"question": question, "answer": answer}
     except Exception as e:

@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+langchain
+langchain-postgres
+langchain-huggingface
+langchain-groq
+psycopg[binary]

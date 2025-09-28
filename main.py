@@ -22,16 +22,17 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def embed_text(text: str):
-    """Call Gemini embeddings and return vector"""
+    """Call Gemini embeddings API (v2) and return vector"""
+    # Gemini expects contents as a list of strings
     emb_response = client.models.embed_content(
         model="text-embedding-004",
-        contents=text
+        contents=[text]  # must be a list
     )
-    # Extract embedding from the response
     return emb_response.data[0].embedding
 
 class GeminiEmbeddings:
     def embed_documents(self, texts):
+        # Accepts a list of strings
         return [embed_text(t) for t in texts]
 
     def embed_query(self, text):
@@ -69,10 +70,11 @@ prompt = hub.pull("rlm/rag-prompt")
 # Utility to format retrieved documents
 # =========================
 def format_docs(docs):
+    """Combine retrieved docs into a single string"""
     return "\n".join(doc.page_content for doc in docs)
 
 def get_context(question: str):
-    """Fetch relevant documents and format them as context"""
+    """Fetch relevant documents and format them"""
     docs = retriever.get_relevant_documents(question)
     return format_docs(docs)
 
@@ -92,7 +94,7 @@ rag_chain = (
 @app.post("/query")
 def query_rag(question: str = Body(..., embed=True)):
     try:
-        # Pass a dictionary matching chain inputs
+        # Invoke the RAG chain with a dictionary input
         answer = rag_chain.invoke({"question": question})
         return {"question": question, "answer": answer}
     except Exception as e:

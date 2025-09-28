@@ -21,25 +21,29 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # =========================
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+# =========================
+# Safe embed_text function
+# =========================
 def embed_text(text: str):
-    """Call Gemini embeddings API (v2) and return vector"""
+    """Embed a plain string with Gemini embeddings API"""
     if not isinstance(text, str):
         raise ValueError("embed_text only accepts strings, not dicts or lists of dicts")
-    
-    # contents can be a single string or a list of strings
     emb_response = client.models.embed_content(
         model="text-embedding-004",
-        contents=[text]  # wrap in list
+        contents=[text]  # wrap single string in a list
     )
-    # Always extract the embedding from data[0]
     return emb_response.data[0].embedding
 
+# =========================
+# Gemini embeddings wrapper
+# =========================
 class GeminiEmbeddings:
     def embed_documents(self, texts):
-        return [embed_text(t) for t in texts]
+        # Ensure every element is a string
+        return [embed_text(t if isinstance(t, str) else str(t)) for t in texts]
 
     def embed_query(self, text):
-        return embed_text(text)
+        return embed_text(str(text))  # convert to string if needed
 
 embeddings = GeminiEmbeddings()
 
@@ -70,16 +74,16 @@ llm = ChatGroq(
 prompt = hub.pull("rlm/rag-prompt")
 
 # =========================
-# Utility to format retrieved documents
+# Utilities
 # =========================
 def format_docs(docs):
     """Combine retrieved docs into a single string"""
-    return "\n".join(doc.page_content for doc in docs)
+    return "\n".join(doc.page_content if hasattr(doc, "page_content") else str(doc) for doc in docs)
 
 def get_context(question: str):
-    """Fetch relevant documents and format them"""
+    """Fetch relevant documents from vector store"""
     docs = retriever.get_relevant_documents(question)
-    return format_docs(docs)  # returns plain string
+    return format_docs(docs)  # always returns a string
 
 # =========================
 # RAG chain
@@ -97,7 +101,7 @@ rag_chain = (
 @app.post("/query")
 def query_rag(question: str = Body(..., embed=True)):
     try:
-        # Only pass plain strings to embeddings internally
+        # Pass dictionary to RAG chain, embeddings get only strings internally
         answer = rag_chain.invoke({"question": question})
         return {"question": question, "answer": answer}
     except Exception as e:

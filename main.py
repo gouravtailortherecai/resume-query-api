@@ -1,11 +1,13 @@
 from fastapi import FastAPI, Body
-import os
-from google import genai
+from langchain.schema import Document
 from langchain_postgres import PGVector
 from langchain_groq import ChatGroq
 from langchain import hub
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
+import os
+import uuid
+from google import genai
 
 app = FastAPI()
 
@@ -22,32 +24,29 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # =========================
-# Safe embed_text function for latest Gemini SDK
+# Safe embed_text for latest Gemini SDK
 # =========================
 def embed_text(text: str):
-    """Embed a plain string with Gemini embeddings API (latest SDK)"""
     if not isinstance(text, str):
         raise ValueError("embed_text only accepts strings, not dicts or lists of dicts")
-
-    # Gemini expects contents as a list of strings
-    emb_response = client.models.embed_content(
+    
+    response = client.models.embed_content(
         model="text-embedding-004",
-        contents=[text]
+        contents=[text]  # must be a list
     )
-
-    # Latest SDK: embeddings are directly in emb_response.embedding
-    if hasattr(emb_response, "embedding"):
-        return emb_response.embedding[0]  # return the first embedding
-    else:
-        # fallback: extract from raw dict
-        return emb_response.__dict__.get("embedding")[0]
+    
+    # Validate response
+    if not response.embeddings or not response.embeddings[0].values:
+        raise ValueError("Gemini API returned no embedding")
+    
+    return response.embeddings[0].values
 
 # =========================
 # Gemini embeddings wrapper
 # =========================
 class GeminiEmbeddings:
     def embed_documents(self, texts):
-        return [embed_text(t if isinstance(t, str) else str(t)) for t in texts]
+        return [embed_text(str(t)) for t in texts]
 
     def embed_query(self, text):
         return embed_text(str(text))
@@ -55,7 +54,7 @@ class GeminiEmbeddings:
 embeddings = GeminiEmbeddings()
 
 # =========================
-# PGVector (Neon Postgres) Setup
+# PGVector (Neon Postgres)
 # =========================
 vectorstore = PGVector(
     embeddings=embeddings,
@@ -67,7 +66,7 @@ vectorstore = PGVector(
 retriever = vectorstore.as_retriever()
 
 # =========================
-# Groq LLM for answers
+# Groq LLM for RAG
 # =========================
 llm = ChatGroq(
     model="openai/gpt-oss-120b",
@@ -81,7 +80,7 @@ llm = ChatGroq(
 prompt = hub.pull("rlm/rag-prompt")
 
 # =========================
-# Utilities
+# Helper functions
 # =========================
 def format_docs(docs):
     """Combine retrieved docs into a single string"""
@@ -90,7 +89,7 @@ def format_docs(docs):
 def get_context(question: str):
     """Fetch relevant documents from vector store"""
     docs = retriever.get_relevant_documents(question)
-    return format_docs(docs)  # always returns a string
+    return format_docs(docs)
 
 # =========================
 # RAG chain
@@ -103,12 +102,28 @@ rag_chain = (
 )
 
 # =========================
-# API Endpoint
+# API Endpoints
 # =========================
+@app.post("/ingest")
+def ingest_resume(resume_text: str = Body(..., embed=True)):
+    """Store a resume in Neon with embeddings"""
+    try:
+        doc_id = str(uuid.uuid4())
+        docs = [
+            Document(
+                page_content=resume_text,
+                metadata={"source": "resume", "id": doc_id}
+            )
+        ]
+        vectorstore.add_documents(docs)
+        return {"status": "success", "message": "Resume stored in Neon", "id": doc_id}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.post("/query")
 def query_rag(question: str = Body(..., embed=True)):
+    """Query resumes using RAG pipeline"""
     try:
-        # Only pass dictionary to RAG chain, embeddings get only strings internally
         answer = rag_chain.invoke({"question": question})
         return {"question": question, "answer": answer}
     except Exception as e:

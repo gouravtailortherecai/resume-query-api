@@ -22,28 +22,35 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 # =========================
-# Safe embed_text function
+# Safe embed_text function for latest Gemini SDK
 # =========================
 def embed_text(text: str):
-    """Embed a plain string with Gemini embeddings API"""
+    """Embed a plain string with Gemini embeddings API (latest SDK)"""
     if not isinstance(text, str):
         raise ValueError("embed_text only accepts strings, not dicts or lists of dicts")
+
+    # Gemini expects contents as a list of strings
     emb_response = client.models.embed_content(
         model="text-embedding-004",
-        contents=[text]  # wrap single string in a list
+        contents=[text]
     )
-    return emb_response.data[0].embedding
+
+    # Latest SDK: embeddings are directly in emb_response.embedding
+    if hasattr(emb_response, "embedding"):
+        return emb_response.embedding[0]  # return the first embedding
+    else:
+        # fallback: extract from raw dict
+        return emb_response.__dict__.get("embedding")[0]
 
 # =========================
 # Gemini embeddings wrapper
 # =========================
 class GeminiEmbeddings:
     def embed_documents(self, texts):
-        # Ensure every element is a string
         return [embed_text(t if isinstance(t, str) else str(t)) for t in texts]
 
     def embed_query(self, text):
-        return embed_text(str(text))  # convert to string if needed
+        return embed_text(str(text))
 
 embeddings = GeminiEmbeddings()
 
@@ -101,7 +108,7 @@ rag_chain = (
 @app.post("/query")
 def query_rag(question: str = Body(..., embed=True)):
     try:
-        # Pass dictionary to RAG chain, embeddings get only strings internally
+        # Only pass dictionary to RAG chain, embeddings get only strings internally
         answer = rag_chain.invoke({"question": question})
         return {"question": question, "answer": answer}
     except Exception as e:

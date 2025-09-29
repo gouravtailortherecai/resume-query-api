@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Body
+from fastapi.middleware.cors import CORSMiddleware
 from langchain.schema import Document
 from langchain_postgres import PGVector
 from langchain_groq import ChatGroq
@@ -10,6 +11,16 @@ import uuid
 from google import genai
 
 app = FastAPI()
+
+
+# ✅ Add CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # change "*" to your frontend domain for better security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # =========================
 # Environment variables

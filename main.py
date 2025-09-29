@@ -35,7 +35,6 @@ def embed_text(text: str):
         contents=[text]  # must be a list
     )
     
-    # Validate response
     if not response.embeddings or not response.embeddings[0].values:
         raise ValueError("Gemini API returned no embedding")
     
@@ -63,8 +62,6 @@ vectorstore = PGVector(
     use_jsonb=True,
 )
 
-retriever = vectorstore.as_retriever()
-
 # =========================
 # Groq LLM for RAG
 # =========================
@@ -83,48 +80,45 @@ prompt = hub.pull("rlm/rag-prompt")
 # Helper functions
 # =========================
 def format_docs(docs):
-    """Combine retrieved docs into a single string"""
     return "\n".join(doc.page_content if hasattr(doc, "page_content") else str(doc) for doc in docs)
 
-def get_context(question: str):
-    """Fetch relevant documents from vector store"""
+def get_context(question: str, user_id: str):
+    """Fetch relevant documents only for a specific user"""
+    retriever = vectorstore.as_retriever(search_kwargs={"filter": {"user_id": user_id}})
     docs = retriever.get_relevant_documents(question)
     return format_docs(docs)
-
-# =========================
-# RAG chain
-# =========================
-rag_chain = (
-    {"context": get_context, "question": RunnablePassthrough()}
-    | prompt
-    | llm
-    | StrOutputParser()
-)
 
 # =========================
 # API Endpoints
 # =========================
 @app.post("/ingest")
-def ingest_resume(resume_text: str = Body(..., embed=True)):
-    """Store a resume in Neon with embeddings"""
+def ingest_resume(resume_text: str = Body(...), user_id: str = Body(...)):
+    """Store a resume in Neon with embeddings, tied to a user_id"""
     try:
         doc_id = str(uuid.uuid4())
         docs = [
             Document(
                 page_content=resume_text,
-                metadata={"source": "resume", "id": doc_id}
+                metadata={"source": "resume", "id": doc_id, "user_id": user_id}
             )
         ]
         vectorstore.add_documents(docs)
-        return {"status": "success", "message": "Resume stored in Neon", "id": doc_id}
+        return {"status": "success", "message": "Resume stored", "id": doc_id, "user_id": user_id}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @app.post("/query")
-def query_rag(question: str = Body(..., embed=True)):
-    """Query resumes using RAG pipeline"""
+def query_rag(question: str = Body(...), user_id: str = Body(...)):
+    """Query only the resumes belonging to a specific user_id"""
     try:
+        context = get_context(question, user_id)
+        rag_chain = (
+            {"context": lambda _: context, "question": RunnablePassthrough()}
+            | prompt
+            | llm
+            | StrOutputParser()
+        )
         answer = rag_chain.invoke({"question": question})
-        return {"question": question, "answer": answer}
+        return {"user_id": user_id, "question": question, "answer": answer}
     except Exception as e:
         return {"status": "error", "message": str(e)}
